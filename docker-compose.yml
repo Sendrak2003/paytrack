@@ -21,8 +21,10 @@ services:
       - sqlite-data:/app/data
     # Порт наружу нужен только при раздельном хостинге фронта.
     # При связке через docker DNS фронт ходит на backend:8080 внутри сети.
+    # Порты наружу для прямого доступа (без Caddy).
+    # При деплое с Caddy можно закомментировать.
     ports:
-      - "8080:8080"
+      - "8090:8080"
     networks:
       - paytrack
     restart: unless-stopped
@@ -40,7 +42,7 @@ services:
         - VITE_API_URL=https://api.paytrack.mikhailgusev.dev
     container_name: paytrack-frontend
     ports:
-      - "3000:80"
+      - "3080:80"
     depends_on:
       backend:
         condition: service_healthy
