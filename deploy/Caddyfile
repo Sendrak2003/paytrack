@@ -1,0 +1,27 @@
+# Caddyfile — автоматический HTTPS через Let's Encrypt.
+# Caddy сам получает и продлевает сертификаты.
+#
+# Запуск:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d
+
+# Backend API
+api.paytrack.mikhailgusev.dev {
+    reverse_proxy backend:8080
+
+    encode gzip
+    log {
+        output stdout
+        format console
+    }
+}
+
+# Frontend SPA
+paytrack.mikhailgusev.dev {
+    reverse_proxy frontend:80
+
+    encode gzip
+    log {
+        output stdout
+        format console
+    }
+}

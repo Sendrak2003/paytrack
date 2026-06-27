@@ -1,0 +1,272 @@
+openapi: 3.0.3
+info:
+  title: PayTrack API
+  description: |
+    Мини-система учёта оплат, проектов и закрывающих документов.
+    Бизнес-цепочка: **проект / юрлицо → оплаты → этапы → статус актов**.
+  version: "1.0.0"
+servers:
+  - url: /api/v1
+tags:
+  - name: dashboard
+  - name: projects
+  - name: payments
+  - name: documents
+  - name: import
+  - name: system
+
+paths:
+  /health:
+    servers: [{ url: / }]
+    get:
+      tags: [system]
+      summary: Liveness probe
+      responses:
+        "200": { description: Процесс жив }
+  /ready:
+    servers: [{ url: / }]
+    get:
+      tags: [system]
+      summary: Readiness probe (пинг БД + статистика пула)
+      responses:
+        "200": { description: БД доступна }
+        "503": { description: БД недоступна }
+
+  /dashboard/summary:
+    get:
+      tags: [dashboard]
+      summary: Сводка по дашборду
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardSummary" }
+
+  /clients:
+    get:
+      tags: [projects]
+      summary: Список юрлиц
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Client" }
+
+  /projects:
+    get:
+      tags: [projects]
+      summary: Проекты с агрегатами по документам
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProjectSummary" }
+
+  /payments:
+    get:
+      tags: [payments]
+      summary: Оплаты с фильтрами
+      parameters:
+        - { name: project_id, in: query, schema: { type: integer } }
+        - { name: legal_entity_id, in: query, schema: { type: integer } }
+        - { name: act_status, in: query, schema: { type: string, enum: [not_sent, waiting_signature, closed, needs_attention] } }
+        - { name: service_stage, in: query, schema: { type: string } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: date_from, in: query, schema: { type: string, format: date } }
+        - { name: date_to, in: query, schema: { type: string, format: date } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Payment" }
+
+  /payments/{id}:
+    get:
+      tags: [payments]
+      summary: Оплата по ID
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Payment" }
+        "404": { description: Не найдено }
+
+  /payments/{id}/act:
+    put:
+      tags: [documents]
+      summary: Создать или обновить акт по оплате
+      description: |
+        Транзакция с блокировкой строки (SELECT … FOR UPDATE) и retry на
+        конфликтах блокировок — защита от потерянного обновления при
+        одновременном редактировании двумя менеджерами.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateActRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Act" }
+
+  /import/bank-statement:
+    post:
+      tags: [import]
+      summary: Идемпотентный импорт банковской выписки (готовые операции)
+      description: |
+        Принимает распарсенные операции. Каждая операция получает
+        детерминированный ExternalID, поэтому повторный импорт не дублирует
+        оплаты. Запись батча обёрнута в транзакцию с retry на блокировках.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ImportRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportResult" }
+
+  /import/bank-statement/raw:
+    post:
+      tags: [import]
+      summary: Импорт выписки из сырого текста (AI/regex)
+      description: |
+        Принимает сырой текст выписки. Извлекает операции через LLM
+        (если задан AI_PROVIDER) или regex-фолбэк (по умолчанию, без ключей),
+        затем идемпотентно импортирует. Поле `extractor` в ответе показывает,
+        что использовалось ("regex" или "llm:<model>").
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                text: { type: string, description: "Сырой текст банковской выписки" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ImportResult"
+                  - type: object
+                    properties:
+                      extractor: { type: string, example: "regex" }
+                      extracted_count: { type: integer }
+  schemas:
+    Client:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        inn: { type: string }
+        ogrn: { type: string }
+        bank_account: { type: string }
+        contact_person: { type: string }
+
+    ProjectSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        client_name: { type: string }
+        inn: { type: string }
+        status: { type: string, enum: [active, completed, paused] }
+        total_amount: { type: number }
+        payments_count: { type: integer }
+        closed_acts_count: { type: integer }
+        open_acts_count: { type: integer }
+        doc_status: { type: string, enum: [all_closed, has_open, needs_attention] }
+
+    Act:
+      type: object
+      properties:
+        id: { type: integer }
+        payment_id: { type: integer }
+        is_sent: { type: boolean }
+        sent_at: { type: string, format: date-time, nullable: true }
+        is_signed: { type: boolean }
+        signed_at: { type: string, format: date-time, nullable: true }
+        status: { type: string, enum: [not_sent, waiting_signature, closed, needs_attention] }
+        manager_comment: { type: string }
+
+    Payment:
+      type: object
+      properties:
+        id: { type: integer }
+        project_id: { type: integer }
+        legal_entity_id: { type: integer }
+        payment_date: { type: string, format: date-time }
+        amount: { type: number }
+        payment_purpose: { type: string }
+        service_stage: { type: string }
+        invoice_number: { type: string }
+        contract_number: { type: string }
+        external_id: { type: string }
+        act: { $ref: "#/components/schemas/Act" }
+
+    DashboardSummary:
+      type: object
+      properties:
+        total_payments: { type: number }
+        total_payments_count: { type: integer }
+        total_projects: { type: integer }
+        closed_acts_amount: { type: number }
+        open_acts_amount: { type: number }
+        not_sent_count: { type: integer }
+        waiting_signature_count: { type: integer }
+        needs_attention_count: { type: integer }
+
+    UpdateActRequest:
+      type: object
+      properties:
+        is_sent: { type: boolean }
+        is_signed: { type: boolean }
+        manager_comment: { type: string }
+
+    BankOperation:
+      type: object
+      properties:
+        date: { type: string, format: date, example: "2024-10-05" }
+        amount: { type: number, example: 150000 }
+        payer_inn: { type: string, example: "7701234567" }
+        payer_name: { type: string }
+        purpose: { type: string }
+        invoice_number: { type: string }
+
+    ImportRequest:
+      type: object
+      properties:
+        operations:
+          type: array
+          items: { $ref: "#/components/schemas/BankOperation" }
+
+    ImportResult:
+      type: object
+      properties:
+        imported: { type: integer }
+        skipped: { type: integer, description: "уже существовали — идемпотентность" }
+        unmatched: { type: integer }
+        errors: { type: array, items: { type: string } }

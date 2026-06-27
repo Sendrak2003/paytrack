@@ -1,0 +1,56 @@
+services:
+  backend:
+    build: ./backend
+    container_name: paytrack-backend
+    environment:
+      PORT: "8080"
+      DB_DRIVER: "sqlite"
+      DB_DSN: "./data/payments.db"
+      # CORS: домены фронтенда, которым разрешён доступ к API.
+      ALLOWED_ORIGINS: "https://paytrack.mikhailgusev.dev,http://localhost:5173,http://localhost:3000"
+      LOG_LEVEL: "info"
+      LOG_FORMAT: "json"
+      # HTTP-таймауты (защита от медленных/зависших клиентов).
+      HTTP_READ_TIMEOUT_SEC: "15"
+      HTTP_WRITE_TIMEOUT_SEC: "30"
+      HTTP_IDLE_TIMEOUT_SEC: "60"
+      # AI извлечение выписки — ОПЦИОНАЛЬНО. Пусто = regex-фолбэк, без ключей/токенов.
+      # Чтобы включить LLM, задай AI_PROVIDER=openai и свои AI_BASE_URL/AI_API_KEY/AI_MODEL.
+      AI_PROVIDER: ""
+    volumes:
+      - sqlite-data:/app/data
+    # Порт наружу нужен только при раздельном хостинге фронта.
+    # При связке через docker DNS фронт ходит на backend:8080 внутри сети.
+    ports:
+      - "8080:8080"
+    networks:
+      - paytrack
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=https://api.paytrack.mikhailgusev.dev
+    container_name: paytrack-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - paytrack
+    restart: unless-stopped
+
+networks:
+  paytrack:
+    driver: bridge
+
+volumes:
+  sqlite-data:

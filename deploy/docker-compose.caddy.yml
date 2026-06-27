@@ -1,0 +1,31 @@
+# Overlay: добавляет Caddy как HTTPS reverse-proxy для обоих поддоменов.
+#
+# Caddy автоматически получает Let's Encrypt сертификаты для:
+#   - paytrack.mikhailgusev.dev (-> frontend:80)
+#   - api.paytrack.mikhailgusev.dev (-> backend:8080)
+#
+# Запуск:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: paytrack-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - paytrack
+
+volumes:
+  caddy-data:
+  caddy-config:

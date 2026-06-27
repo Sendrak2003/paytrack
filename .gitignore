@@ -1,0 +1,11 @@
+# Backend
+backend/data/
+backend/server
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# General
+.DS_Store
+*.local
